@@ -27,6 +27,7 @@ def fixture(*, status="COMPLETED", conclusion="SUCCESS", rollup="SUCCESS"):
     return {"data": {"repository": {"pullRequest": {
         "number": 123, "url": "https://github.com/example/api/pull/123", "state": "OPEN",
         "isDraft": False, "headRefOid": head, "baseRefOid": "b" * 40,
+        "headRefName": "feature/read-state", "headRepository": {"nameWithOwner": "example/api"},
         "baseRefName": "dev", "baseRef": {"target": {"oid": "c" * 40}},
         "mergeable": "MERGEABLE", "mergeStateStatus": "BEHIND", "reviewDecision": "APPROVED",
         "commits": {"nodes": [{"commit": {"oid": head, "statusCheckRollup": {
@@ -58,6 +59,8 @@ class NormalizationTests(unittest.TestCase):
                 self.assertEqual(result["merge_state"], "BEHIND")
                 self.assertEqual(result["recorded_base"], "b" * 40)
                 self.assertEqual(result["target_tip"], "c" * 40)
+                self.assertEqual(result["head_branch"], "feature/read-state")
+                self.assertEqual(result["head_repository"], "example/api")
 
     def test_unknown_truncated_raced_and_absent_checks(self):
         for kind in ["truncated", "count", "raced", "unknown"]:
@@ -259,6 +262,38 @@ os.execv({self.real_gh!r}, [{self.real_gh!r}, *args])
         self.assertEqual(self.server.requests, 2)
         self.assertEqual(self.call()["ci"], "CHECKS_PASS")
         self.assertEqual(self.server.requests, 2)
+
+    def test_concurrent_claims_have_one_owner_and_release_is_offline(self):
+        processes = [subprocess.Popen([*self.command, "--claim", f"worker-{i}",
+                      "--contact", f"local:worker-{i}", "--after", "example/api#124",
+                      "--intent", "waiting", "--onto", "feature/dependency"],
+                     env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                     for i in range(3)]
+        def cleanup():
+            for process in processes:
+                if process.poll() is None: process.kill()
+                process.communicate()
+        self.addCleanup(cleanup)
+        successes = []
+        for process in processes:
+            stdout, stderr = process.communicate(timeout=10)
+            state = json.loads(stdout)
+            if process.returncode == 0:
+                successes.append(state)
+            else:
+                self.assertEqual(process.returncode, 1, stderr or stdout)
+                self.assertEqual(state["state"], "ERROR")
+        self.assertEqual(len(successes), 1)
+        claim = successes[0]["coordination"]["claim"]
+        self.assertEqual(claim["after"], ["example/api#124"])
+        self.assertEqual(claim["onto"], "feature/dependency")
+        self.assertEqual(claim["intent"], "waiting")
+        self.assertEqual(self.call()["coordination"]["claim"]["owner"], claim["owner"])
+        self.assertEqual(self.server.requests, 1)
+        self.assertTrue(self.call("--release", claim["owner"])["released"])
+        self.assertEqual(self.server.requests, 1)
+        self.assertIsNone(self.call()["coordination"]["claim"])
+        self.assertEqual(self.server.requests, 1)
 
     def test_api_and_cached_graphql_errors_are_never_fresh_success(self):
         self.server.error = 400

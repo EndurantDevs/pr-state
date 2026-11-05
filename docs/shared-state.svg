@@ -1,12 +1,8 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="740" viewBox="0 0 1200 740" role="img" aria-labelledby="title description">
-  <title id="title">Shared PR observations: one refresh, many readers</title>
-  <desc id="description">Two panels compare independent polling with a shared local PR-state cache. On the left, four readers separately send HTTP requests to the GitHub API. On the right, four readers reuse one observed snapshot from the GitHub CLI cache, with one HTTP refresh per page and cache window: 30 seconds for ordinary reads, 5 seconds while waiting. The cache reports information; live verification is still required before acting. Animation is conceptual, not a benchmark, and is disabled when reduced motion is preferred.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="340" viewBox="0 0 960 340" role="img" aria-labelledby="title description">
+  <title id="title">Separate PR-state reads and a shared cache</title>
+  <desc id="description">On the left, three readers independently make three HTTP reads to the GitHub API. On the right, the same readers share a local GitHub CLI cache, which needs one HTTP refresh per page and cache window. Ordinary observations are cached for 30 seconds; wait observations use 5 seconds. The static diagram remains complete when reduced motion is preferred.</desc>
   <defs>
-    <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#F7FAFF"/>
-      <stop offset="1" stop-color="#EDF4FD"/>
-    </linearGradient>
-    <linearGradient id="snapshot" x1="0" y1="0" x2="1" y2="1">
+    <linearGradient id="cache-fill" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#0C65B4"/>
       <stop offset="1" stop-color="#07477F"/>
     </linearGradient>
@@ -16,183 +12,81 @@
     <marker id="blue-arrow" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto" markerUnits="userSpaceOnUse">
       <path d="M0 0 7 3.5 0 7Z" fill="#0F7DDE"/>
     </marker>
-    <g id="reader-icon" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
-      <circle cx="0" cy="-5" r="4"/>
-      <path d="M-7 8C-7 0 7 0 7 8"/>
-    </g>
   </defs>
   <style>
     text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-    .eyebrow { font-size: 13px; font-weight: 700; letter-spacing: 2px; fill: #145A98; }
-    .heading { font-size: 34px; font-weight: 700; letter-spacing: -1px; fill: #10243B; }
-    .lead { font-size: 18px; fill: #506379; }
-    .panel-title { font-size: 24px; font-weight: 700; letter-spacing: -.5px; fill: #172C45; }
-    .panel-copy { font-size: 16px; fill: #51657D; }
+    .heading { font-size: 21px; font-weight: 700; fill: #172C45; }
     .reader { fill: #FFFFFF; stroke: #D5E1EF; stroke-width: 1.4; }
-    .reader-label { font-size: 17px; font-weight: 600; fill: #29415C; }
-    .number { font-size: 13px; font-weight: 700; fill: #46617D; }
-    .api-title { font-size: 18px; font-weight: 650; fill: #FFFFFF; text-anchor: middle; }
-    .flow-label { font-size: 13px; font-weight: 600; letter-spacing: .4px; text-anchor: middle; }
-    .summary { font-size: 18px; font-weight: 650; }
-    .muted { font-size: 15px; fill: #536A82; }
-    .motion { opacity: 0; }
-    .request { animation: request 5.6s linear infinite; }
-    .request-2 { animation-delay: -1.4s; }
-    .request-3 { animation-delay: -2.8s; }
-    .request-4 { animation-delay: -4.2s; }
-    .refresh { animation: refresh 6.4s ease-in-out infinite; }
-    .reuse { animation: reuse 6.4s ease-out infinite; }
-    .reuse-2 { animation-delay: -.6s; }
-    .reuse-3 { animation-delay: -1.2s; }
-    .reuse-4 { animation-delay: -1.8s; }
-    .cache-halo { animation: halo 6.4s ease-out infinite; opacity: 0; }
-    @keyframes request {
-      0%, 7% { transform: translateX(0); opacity: 0; }
-      10% { opacity: 1; }
-      45% { transform: translateX(188px); opacity: 1; }
-      49%, 100% { transform: translateX(188px); opacity: 0; }
-    }
-    @keyframes refresh {
-      0%, 8% { transform: translateX(0); opacity: 0; }
-      12% { opacity: 1; }
-      25% { transform: translateX(34px); opacity: 1; }
-      29%, 100% { transform: translateX(34px); opacity: 0; }
-    }
-    @keyframes reuse {
-      0%, 36% { transform: translateX(0); opacity: 0; }
-      40% { opacity: 1; }
-      61% { transform: translateX(-17px); opacity: 1; }
-      65%, 100% { transform: translateX(-17px); opacity: 0; }
-    }
-    @keyframes halo {
-      0%, 26% { opacity: 0; }
-      35% { opacity: .65; }
-      60%, 100% { opacity: 0; }
+    .label { font-size: 16px; font-weight: 600; fill: #29415C; text-anchor: middle; }
+    .api { font-size: 16px; font-weight: 650; fill: #FFFFFF; text-anchor: middle; }
+    .caption { font-size: 17px; font-weight: 650; }
+    .packet { opacity: 0; animation: move 5.4s linear infinite; }
+    @keyframes move {
+      0%, 10% { transform: translateX(0); opacity: 0; }
+      15% { opacity: 1; }
+      46% { transform: translateX(var(--travel)); opacity: 1; }
+      50%, 100% { transform: translateX(var(--travel)); opacity: 0; }
     }
     @media (prefers-reduced-motion: reduce) {
-      .motion, .cache-halo { animation: none !important; display: none; }
+      .packet { animation: none !important; display: none; }
     }
   </style>
 
-  <rect width="1200" height="740" rx="28" fill="url(#background)"/>
-  <text x="36" y="39" class="eyebrow">PR STATE / SHARED OBSERVATIONS</text>
-  <text x="34" y="86" class="heading">Read once. Share the observation.</text>
-  <text x="36" y="119" class="lead">Routine status checks can reuse the same snapshot.</text>
-
-  <rect x="28" y="149" width="558" height="418" rx="22" fill="#FFFFFF" stroke="#D8E3F0"/>
-  <rect x="614" y="149" width="558" height="418" rx="22" fill="#F0F7FF" stroke="#BFD7F0"/>
-
-  <circle cx="66" cy="187" r="16" fill="#EFF2F7"/>
-  <text x="66" y="192" class="number" text-anchor="middle">01</text>
-  <text x="94" y="195" class="panel-title">Independent polling</text>
-  <text x="52" y="224" class="panel-copy">Each reader asks the API again.</text>
+  <rect width="960" height="340" rx="22" fill="#F7FAFF"/>
+  <rect x="12" y="12" width="458" height="316" rx="19" fill="#FFFFFF" stroke="#D8E3F0"/>
+  <rect x="490" y="12" width="458" height="316" rx="19" fill="#F0F7FF" stroke="#BFD7F0"/>
+  <text x="34" y="47" class="heading">Separate reads</text>
+  <text x="512" y="47" class="heading">Shared cache</text>
 
   <g>
-    <rect x="52" y="247" width="150" height="44" rx="12" class="reader"/>
-    <rect x="52" y="307" width="150" height="44" rx="12" class="reader"/>
-    <rect x="52" y="367" width="150" height="44" rx="12" class="reader"/>
-    <rect x="52" y="427" width="150" height="44" rx="12" class="reader"/>
-    <g color="#6F7C8F">
-      <use href="#reader-icon" x="74" y="270"/>
-      <use href="#reader-icon" x="74" y="330"/>
-      <use href="#reader-icon" x="74" y="390"/>
-      <use href="#reader-icon" x="74" y="450"/>
-    </g>
-    <text x="95" y="275" class="reader-label">Reader 1</text>
-    <text x="95" y="335" class="reader-label">Reader 2</text>
-    <text x="95" y="395" class="reader-label">Reader 3</text>
-    <text x="95" y="455" class="reader-label">Reader 4</text>
+    <rect x="34" y="78" width="120" height="44" rx="11" class="reader"/>
+    <rect x="34" y="142" width="120" height="44" rx="11" class="reader"/>
+    <rect x="34" y="206" width="120" height="44" rx="11" class="reader"/>
+    <text x="94" y="106" class="label">Reader 1</text>
+    <text x="94" y="170" class="label">Reader 2</text>
+    <text x="94" y="234" class="label">Reader 3</text>
   </g>
-
   <g fill="none" stroke="#FF5F53" stroke-width="1.8" marker-end="url(#coral-arrow)">
-    <path d="M215 269H423"/>
-    <path d="M215 329H423"/>
-    <path d="M215 389H423"/>
-    <path d="M215 449H423"/>
+    <path d="M168 100H314"/>
+    <path d="M168 164H314"/>
+    <path d="M168 228H314"/>
   </g>
   <g fill="#FF5F53">
-    <circle cx="224" cy="269" r="4" class="motion request"/>
-    <circle cx="224" cy="329" r="4" class="motion request request-2"/>
-    <circle cx="224" cy="389" r="4" class="motion request request-3"/>
-    <circle cx="224" cy="449" r="4" class="motion request request-4"/>
+    <circle cx="174" cy="100" r="3.5" class="packet" style="--travel: 130px"/>
+    <circle cx="174" cy="164" r="3.5" class="packet" style="--travel: 130px; animation-delay: -1.8s"/>
+    <circle cx="174" cy="228" r="3.5" class="packet" style="--travel: 130px; animation-delay: -3.6s"/>
   </g>
-  <text x="316" y="257" class="flow-label" fill="#AA3128">HTTP</text>
-  <text x="316" y="317" class="flow-label" fill="#AA3128">HTTP</text>
-  <text x="316" y="377" class="flow-label" fill="#AA3128">HTTP</text>
-  <text x="316" y="437" class="flow-label" fill="#AA3128">HTTP</text>
-  <rect x="434" y="247" width="126" height="224" rx="18" fill="#142D4B"/>
-  <g fill="none" stroke="#9DB6D0" stroke-width="1.7">
-    <rect x="482" y="313" width="30" height="18" rx="4"/>
-    <rect x="482" y="337" width="30" height="18" rx="4"/>
-    <circle cx="489" cy="322" r="1.5" fill="#9DB6D0"/>
-    <circle cx="489" cy="346" r="1.5" fill="#9DB6D0"/>
-  </g>
-  <text x="497" y="385" class="api-title">GitHub</text>
-  <text x="497" y="409" class="api-title">API</text>
-  <text x="52" y="512" class="summary" fill="#AA3128">Repeated HTTP reads</text>
-  <text x="52" y="539" class="muted">The observation is fetched separately.</text>
-
-  <circle cx="652" cy="187" r="16" fill="#D6E8FB"/>
-  <text x="652" y="192" class="number" text-anchor="middle">02</text>
-  <text x="680" y="195" class="panel-title">Shared observation</text>
-  <text x="638" y="224" class="panel-copy">One refresh supplies every local reader.</text>
+  <rect x="328" y="78" width="118" height="172" rx="16" fill="#142D4B"/>
+  <text x="387" y="158" class="api">GitHub</text>
+  <text x="387" y="182" class="api">API</text>
+  <text x="34" y="294" class="caption" fill="#AA3128">3 HTTP reads</text>
 
   <g>
-    <rect x="638" y="247" width="142" height="44" rx="12" class="reader"/>
-    <rect x="638" y="307" width="142" height="44" rx="12" class="reader"/>
-    <rect x="638" y="367" width="142" height="44" rx="12" class="reader"/>
-    <rect x="638" y="427" width="142" height="44" rx="12" class="reader"/>
-    <g color="#2469A6">
-      <use href="#reader-icon" x="660" y="270"/>
-      <use href="#reader-icon" x="660" y="330"/>
-      <use href="#reader-icon" x="660" y="390"/>
-      <use href="#reader-icon" x="660" y="450"/>
-    </g>
-    <text x="681" y="275" class="reader-label">Reader 1</text>
-    <text x="681" y="335" class="reader-label">Reader 2</text>
-    <text x="681" y="395" class="reader-label">Reader 3</text>
-    <text x="681" y="455" class="reader-label">Reader 4</text>
+    <rect x="512" y="78" width="120" height="44" rx="11" class="reader"/>
+    <rect x="512" y="142" width="120" height="44" rx="11" class="reader"/>
+    <rect x="512" y="206" width="120" height="44" rx="11" class="reader"/>
+    <text x="572" y="106" class="label">Reader 1</text>
+    <text x="572" y="170" class="label">Reader 2</text>
+    <text x="572" y="234" class="label">Reader 3</text>
   </g>
   <g fill="none" stroke="#0F7DDE" stroke-width="1.8">
-    <path d="M780 269H799M780 329H799M780 389H799M780 449H799M799 269V449M799 359H824"/>
+    <path d="M632 100H650M632 164H674M632 228H650M650 100V228"/>
   </g>
   <g fill="#0F7DDE">
-    <circle cx="799" cy="269" r="3"/>
-    <circle cx="799" cy="329" r="3"/>
-    <circle cx="799" cy="389" r="3"/>
-    <circle cx="799" cy="449" r="3"/>
+    <circle cx="650" cy="100" r="2.5"/>
+    <circle cx="650" cy="164" r="2.5"/>
+    <circle cx="650" cy="228" r="2.5"/>
+    <circle cx="648" cy="100" r="3" class="packet" style="--travel: -13px; animation-delay: -2.5s"/>
+    <circle cx="648" cy="164" r="3" class="packet" style="--travel: -13px; animation-delay: -3.1s"/>
+    <circle cx="648" cy="228" r="3" class="packet" style="--travel: -13px; animation-delay: -3.7s"/>
   </g>
-  <g fill="#0F7DDE">
-    <circle cx="797" cy="269" r="3.5" class="motion reuse"/>
-    <circle cx="797" cy="329" r="3.5" class="motion reuse reuse-2"/>
-    <circle cx="797" cy="389" r="3.5" class="motion reuse reuse-3"/>
-    <circle cx="797" cy="449" r="3.5" class="motion reuse reuse-4"/>
-  </g>
-  <rect x="819" y="285" width="168" height="148" rx="23" fill="none" stroke="#0F7DDE" stroke-width="4" class="cache-halo"/>
-  <rect x="826" y="292" width="154" height="134" rx="17" fill="url(#snapshot)" stroke="#0F7DDE"/>
-  <text x="903" y="319" text-anchor="middle" font-size="15" font-weight="650" fill="#FFFFFF">Shared snapshot</text>
-  <path d="M841 334H965" stroke="#7FB3E2" stroke-width="1"/>
-  <circle cx="845" cy="354" r="3" fill="#C4E2FF"/>
-  <text x="855" y="360" font-size="16" font-weight="550" fill="#FFFFFF">CI: running</text>
-  <text x="842" y="383" font-size="14" fill="#DBECFD">age: 8s</text>
-  <rect x="838" y="396" width="130" height="21" rx="6" fill="#084D86"/>
-  <text x="903" y="411" text-anchor="middle" font-size="13" font-weight="650" fill="#FFFFFF">30s read / 5s wait</text>
-
-  <path d="M988 359H1025" fill="none" stroke="#0F7DDE" stroke-width="1.8" marker-end="url(#blue-arrow)"/>
-  <text x="1006" y="344" class="flow-label" fill="#145D9A">HTTP</text>
-  <circle cx="990" cy="359" r="4" fill="#0F7DDE" class="motion refresh"/>
-  <rect x="1034" y="305" width="112" height="108" rx="17" fill="#142D4B"/>
-  <text x="1090" y="353" class="api-title">GitHub</text>
-  <text x="1090" y="378" class="api-title">API</text>
-  <text x="638" y="489" font-size="13" font-weight="600" letter-spacing=".4" fill="#2469A6">LOCAL READS</text>
-  <text x="638" y="517" class="summary" fill="#0A5D9F">One HTTP refresh per page</text>
-  <text x="638" y="543" class="muted">for each shared cache window.</text>
-
-  <rect x="28" y="592" width="1144" height="116" rx="22" fill="#10243B"/>
-  <g fill="none" stroke="#87BDEC" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M62 625 75 620 88 625V636C88 645 81 651 75 654 69 651 62 645 62 636Z"/>
-    <path d="M75 629V638M75 644V645"/>
-  </g>
-  <text x="107" y="642" font-size="21" font-weight="650" fill="#FFFFFF">Shared information. Live verification before acting.</text>
-  <text x="52" y="681" font-size="15" fill="#C4D6EA">The animation illustrates request reuse, not measured speed. Cached observations do not authorize a merge.</text>
+  <rect x="674" y="120" width="136" height="88" rx="15" fill="url(#cache-fill)" stroke="#0F7DDE" stroke-width="1.5"/>
+  <text x="742" y="154" class="api">gh cache</text>
+  <text x="742" y="180" text-anchor="middle" font-size="12" font-weight="550" fill="#E3F0FF">30s · wait 5s</text>
+  <path d="M820 164H848" fill="none" stroke="#0F7DDE" stroke-width="1.8" marker-end="url(#blue-arrow)"/>
+  <circle cx="821" cy="164" r="3.5" fill="#0F7DDE" class="packet" style="--travel: 20px"/>
+  <rect x="862" y="128" width="66" height="72" rx="13" fill="#142D4B"/>
+  <text x="895" y="159" text-anchor="middle" font-size="14" font-weight="650" fill="#FFFFFF">GitHub</text>
+  <text x="895" y="181" text-anchor="middle" font-size="14" font-weight="650" fill="#FFFFFF">API</text>
+  <text x="512" y="294" class="caption" fill="#0A5D9F">1 HTTP refresh / page</text>
 </svg>

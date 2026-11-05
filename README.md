@@ -31,7 +31,7 @@ pr-state OWNER/REPO 123 --wait --timeout 50 --json
 pr-state OWNER/REPO 123 --fresh
 ```
 
-One line reports the head, recorded base, current target tip, check counts, review
+One line reports the head branch/SHA, recorded base, current target branch/tip, check counts, review
 decision, merge state, and observation age. `--json` returns the same information
 as one JSON object. `--wait` stays silent until the observation changes or the
 timeout expires; JSON includes `changed: true` or `changed: false`.
@@ -40,6 +40,44 @@ Active `--wait` readers share a 5-second refresh interval. Ordinary reads use a
 30-second cache and also benefit from any watcher's newer response. There are no
 push notifications: a watcher sees a GitHub change within about 5 seconds plus
 request time. Two watchers share each refresh instead of sending two requests.
+
+## Private coordination
+
+Explicitly register a task you own, using a unique worker ID and a contact locator
+that other local workers understand:
+
+```sh
+pr-state OWNER/REPO 123 --claim worker-a --contact local:worker-a --json
+pr-state OWNER/REPO 124 --claim worker-b --contact local:worker-b --after OWNER/REPO#123 --onto main --intent waiting --json
+pr-state OWNER/REPO 123 --claim worker-a --contact local:worker-a --intent landing --json
+pr-state OWNER/REPO 123 --release worker-a --json
+```
+
+Ordinary reads and waits now include `coordination`:
+
+- `claim`: owner/contact, planned head and target, intended rebase destination
+  (`onto`), declared predecessors (`after`), intent, and expiry.
+- `peers`: unexpired claims on other PRs in the same repository targeting the same
+  branch. Each includes its owner/contact and plan, so workers can contact the right owner.
+- `landing_conflict`: more than one active record declares `landing`. Owners need
+  to agree on an order; the tool does not impose one or block a branch.
+
+For the observed PR, `expired`, `head_matches`, `target_matches`, and
+`target_tip_matches` identify an old plan. Peer records are declared snapshots;
+their current GitHub heads and dependency merge states have **not** been verified.
+`after` and `onto` record intent, not proof that a rebase is valid or authorized.
+
+Claims last 15 minutes by default. Renew by repeating `--claim` with the complete
+current plan; omitted predecessors are cleared and omitted intent becomes `working`.
+`--lease` accepts 30–3600 seconds; `landing` is capped at 5 minutes. A different owner
+cannot replace a live claim. Expired claims can be replaced, and the recorded owner
+can release a claim without GitHub access. Reading a PR never claims it automatically.
+
+Records are atomic private files under the same local cache root, separate from
+the HTTP response cache. They are shared by this OS user and host/repository,
+including across `gh` authentication profiles. They are not posted to GitHub and
+do not send messages. Owner IDs are coordination labels, not authenticated identities.
+These records help negotiate order without reserving a target branch during development.
 
 ## Why share PR observations?
 
@@ -96,10 +134,28 @@ The cache is private to the local OS user, under `$XDG_CACHE_HOME/pr-state` or
 `~/.cache/pr-state`. GitHub CLI's response keys include authentication, separating
 responses for different credentials. Existing `GH_HOST`, `GH_CONFIG_DIR`, and token
 environment variables are honored. Private repository observations stay in the local
-cache; avoid copying them into public logs. The tool does not edit PRs, dispatch CI,
-claim work, or merge anything.
+cache; avoid copying them into public logs. The tool does not edit GitHub PRs,
+dispatch CI, perform rebases, or merge anything.
 
 ## Adopt it in a workflow
+
+Installation makes the command available; agents also need persistent instructions.
+Add this short rule to your agent's existing instruction file:
+
+```text
+For routine per-PR observation, use pr-state OWNER/REPO NUMBER --json.
+Wait with --wait --timeout 50. Claim only work you own, using a unique worker ID
+and a usable private contact locator. Read coordination.claim and peers before
+negotiating rebase/landing order; renew the complete plan and release it when done.
+Claims and cached checks never replace live checks, review policy, or authorization.
+```
+
+For Codex, use a project `AGENTS.md` or global `~/.codex/AGENTS.md` as described in the
+[official instructions guide](https://developers.openai.com/cookbook/examples/gpt-5/codex_prompting_guide).
+For Claude Code, an existing project or user-level `CLAUDE.md` works; see its
+[instruction-loading documentation](https://code.claude.com/docs/en/memory).
+Restart/reload existing sessions or explicitly ask them to read the new rule.
+The installer does not silently rewrite agent policies.
 
 Use `pr-state` for routine per-PR observation and `--wait --timeout 50` for bounded
 waiting. Preserve efficient batched queries when watching many different PRs.
