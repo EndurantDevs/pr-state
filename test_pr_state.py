@@ -85,6 +85,31 @@ class NormalizationTests(unittest.TestCase):
             self.assertEqual(result["ci"], "CHECKS_PASS")
             self.assertIn(field + ":1", module.render(result))
 
+    def test_merge_queue_position_candidate_and_branch_entries(self):
+        result = module.normalize(fixture(), None, "example/api")
+        self.assertEqual(result["merge_queue"], {
+            "enabled": False, "position": None, "state": None, "candidate": None,
+            "candidate_base": None, "enqueued_at": None, "length": 0, "entries": []})
+        self.assertNotIn("queue=", module.render(result))
+        data = fixture()
+        pull(data).update(isMergeQueueEnabled=True, mergeQueueEntry=None, mergeQueue={"entries": {"totalCount": 0, "nodes": []}})
+        self.assertIn(" queue=-/0", module.render(module.normalize(data, None, "example/api")))
+        pull(data).update(
+            mergeQueueEntry={"position": 1, "state": "AWAITING_CHECKS", "enqueuedAt": "2026-11-05T12:00:00Z",
+                             "headCommit": {"oid": "e" * 40}, "baseCommit": {"oid": "c" * 40}},
+            mergeQueue={"entries": {"totalCount": 2, "nodes": [
+                {"position": 2, "state": "QUEUED", "pullRequest": {"number": 124}, "headCommit": None},
+                {"position": 1, "state": "AWAITING_CHECKS", "pullRequest": {"number": 123}, "headCommit": {"oid": "e" * 40}}]}})
+        result = module.normalize(data, None, "example/api")
+        self.assertEqual(result["merge_queue"], {
+            "enabled": True, "position": 1, "state": "AWAITING_CHECKS", "candidate": "e" * 40,
+            "candidate_base": "c" * 40, "enqueued_at": "2026-11-05T12:00:00Z", "length": 2, "entries": [
+                {"pr": 123, "position": 1, "state": "AWAITING_CHECKS", "candidate": "e" * 40},
+                {"pr": 124, "position": 2, "state": "QUEUED", "candidate": None}]})
+        self.assertIn(" queue=1/2:AWAITING_CHECKS", module.render(result))
+        del pull(data)["mergeQueue"]["entries"]["nodes"][0]["position"]
+        with self.assertRaises(module.StateError): module.normalize(data, None, "example/api")
+
     def test_graphql_and_incomplete_data_are_errors(self):
         raw = "HTTP/2.0 200 OK\r\nDate: Thu, 05 Nov 2026 12:00:00 GMT\r\n\r\n" + json.dumps({"errors": [{"message": "fixture"}]})
         with self.assertRaises(module.StateError): module.parse_response(raw)

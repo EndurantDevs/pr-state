@@ -36,6 +36,13 @@ decision, merge state, and observation age. `--json` returns the same informatio
 as one JSON object. `--wait` stays silent until the observation changes or the
 timeout expires; JSON includes `changed: true` or `changed: false`.
 `--fresh` fetches now and replaces the shared cached observation.
+
+Where the target branch uses a GitHub merge queue, `merge_queue` reports the PR's
+`position`, `state`, enqueue time, and the temporary `candidate` commit GitHub built for
+it on `candidate_base`, plus the branch's `entries` in queue order (up to 100; `length`
+is the full count). The line shows `queue=POSITION/LENGTH:STATE`, or `queue=-/LENGTH`
+for a PR outside the queue. A candidate is absent until GitHub builds one. Passing PR
+checks do not show that a queue candidate passed.
 Active `--wait` readers share a 5-second refresh interval. Ordinary reads use a
 30-second cache and also benefit from any watcher's newer response. There are no
 push notifications: a watcher sees a GitHub change within about 5 seconds plus
@@ -61,6 +68,13 @@ Ordinary reads and waits now include `coordination`:
   branch. Each includes its owner/contact and plan, so workers can contact the right owner.
 - `landing_conflict`: more than one active record declares `landing`. Owners need
   to agree on an order; the tool does not impose one or block a branch.
+- `ahead`: the PRs expected to land on the target branch before this one, each with
+  `via`. `queue` entries come from GitHub's merge queue and are ahead of every PR outside
+  it. For a PR outside the queue, `claim` entries are live `landing` claims that began
+  earlier. A renewed claim keeps its place; one that lapses or changes intent rejoins at
+  the end. An empty list means nothing known lands first. It is advice for choosing when
+  to prepare a final head, not a lock: another worker or a direct push can still move
+  the branch.
 
 For the observed PR, `expired`, `head_matches`, `target_matches`, and
 `target_tip_matches` identify an old plan. Peer records are declared snapshots;
