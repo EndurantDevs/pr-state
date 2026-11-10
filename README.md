@@ -72,7 +72,9 @@ Ordinary reads and waits now include `coordination`:
   `via`. `queue` entries come from GitHub's merge queue and are ahead of every PR outside
   it. For a PR outside the queue, `claim` entries are live `landing` claims that began
   earlier. A renewed claim keeps its place; one that lapses or changes intent rejoins at
-  the end. An empty list means nothing known lands first. It is advice for choosing when
+  the end. An empty list means nothing known lands first. Only the listed queue entries
+  are counted, so on a queue longer than 100 (`merge_queue.length` exceeds the number of
+  `entries`) the list can be incomplete. It is advice for choosing when
   to prepare a final head, not a lock: another worker or a direct push can still move
   the branch.
 
