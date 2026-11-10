@@ -26,6 +26,11 @@ QUERY = """query($owner: String!, $repo: String!, $number: Int!, $cursor: String
       number url state isDraft headRefOid headRefName baseRefOid baseRefName
       headRepository { nameWithOwner }
       mergeable mergeStateStatus reviewDecision
+      isMergeQueueEnabled
+      mergeQueueEntry { position state enqueuedAt headCommit { oid } baseCommit { oid } }
+      mergeQueue { entries(first: 100) { totalCount nodes {
+        position state pullRequest { number } headCommit { oid }
+      } } }
       baseRef { target { oid } }
       commits(last: 1) { nodes { commit {
         oid
@@ -103,6 +108,22 @@ def check_page(data):
         raise StateError("PR unavailable or GitHub returned incomplete PR data") from error
 
 
+def merge_queue(pr):
+    """The target branch's merge queue as GitHub lists it; positions start at 1."""
+    def oid(entry, key):
+        return (entry.get(key) or {}).get("oid")
+    own = pr.get("mergeQueueEntry") or {}
+    listed = (pr.get("mergeQueue") or {}).get("entries") or {}
+    entries = sorted(({"pr": node["pullRequest"]["number"], "position": node["position"],
+                       "state": node["state"], "candidate": oid(node, "headCommit")}
+                      for node in listed.get("nodes") or [] if node), key=lambda entry: entry["position"])
+    return {"enabled": bool(pr.get("isMergeQueueEnabled")),
+            "position": own.get("position"), "state": own.get("state"),
+            "candidate": oid(own, "headCommit"), "candidate_base": oid(own, "baseCommit"),
+            "enqueued_at": own.get("enqueuedAt"),
+            "length": listed.get("totalCount", len(entries)), "entries": entries}
+
+
 def normalize(data, observed, slug):
     try:
         pr, commit, rollup, contexts = check_page(data)
@@ -160,6 +181,7 @@ def normalize(data, observed, slug):
             "target_tip": ((pr.get("baseRef") or {}).get("target") or {}).get("oid"),
             "state": pr["state"], "draft": pr["isDraft"],
             "mergeable": pr["mergeable"], "merge_state": pr["mergeStateStatus"],
+            "merge_queue": merge_queue(pr),
             "review": pr.get("reviewDecision") or "UNKNOWN", "ci": ci,
             "checks": counts, "failed_checks": failures, "incomplete": bool(incomplete),
             "observed_at": observed,
@@ -288,8 +310,10 @@ def read_claim(path):
                 or not isinstance(record.get("after"), list)
                 or any(not isinstance(ref, str) for ref in record["after"])
                 or any(not isinstance(record.get(key), (int, float))
-                       or not 0 < record[key] < float("inf") for key in ("updated_at", "expires_at"))):
+                       or not 0 < record[key] < float("inf") for key in ("updated_at", "expires_at"))
+                or not isinstance(record.get("since", 0), (int, float))):
             raise ValueError("Invalid record")
+        record.setdefault("since", record["updated_at"])  # records written before `since` existed
         return record
     except (ValueError, TypeError) as error:
         raise StateError(f"Invalid private coordination record {path.name!r}; repair or remove it locally") from error
@@ -311,11 +335,13 @@ def coordination(state, *, claim=None, contact=None, after=(), onto=None,
             if any(not isinstance(state.get(key), str) or not state[key]
                    for key in ("head", "target_branch", "recorded_base", "target_tip")):
                 raise StateError("PR branch identity is incomplete; cannot register a plan")
+            # A live claim keeps its place in line while the same intent is renewed.
+            since = own["since"] if own and own["expires_at"] > now and own["intent"] == intent else now
             own = {
                 "pr": state["pr"], "owner": claim, "contact": contact, "head": state["head"],
                 "target_branch": state["target_branch"], "recorded_base": state["recorded_base"],
                 "target_tip": state["target_tip"], "onto": onto or state["target_branch"],
-                "after": list(after), "intent": intent, "updated_at": now,
+                "after": list(after), "intent": intent, "updated_at": now, "since": since,
                 "expires_at": now + min(lease, 300 if intent == "landing" else 3600),
             }
             with tempfile.NamedTemporaryFile(mode="w", dir=directory, prefix=".claim-", delete=False) as stream:
@@ -337,12 +363,25 @@ def coordination(state, *, claim=None, contact=None, after=(), onto=None,
                 peers.append(record)
         active = [record for record in [own, *peers] if record and record["expires_at"] > now
                   and record["target_branch"] == state["target_branch"]]
+        # GitHub's queue decides the order of enqueued PRs. Before that, the earliest live
+        # landing claim holds the turn, so one owner at a time prepares a final head.
+        queue = state.get("merge_queue") or {}
+        position = queue.get("position")
+        queued = {entry["pr"]: entry["position"] for entry in queue.get("entries", [])}
+        ahead = [{"pr": f"{slug}#{peer}", "via": "queue"} for peer, place in queued.items()
+                 if peer != int(number) and (position is None or place < position)]
+        if position is None:
+            def turn(record):
+                return record["since"], int(record["pr"].rsplit("#", 1)[1])
+            mine = turn(own) if own in active and own["intent"] == "landing" else (float("inf"), 0)
+            ahead += [{"pr": record["pr"], "via": "claim"} for record in sorted(peers, key=turn)
+                      if record["intent"] == "landing" and turn(record)[1] not in queued and turn(record) < mine]
         if own:
             own = dict(own, expired=own["expires_at"] <= now,
                        head_matches=own["head"] == state["head"],
                        target_matches=own["target_branch"] == state["target_branch"],
                        target_tip_matches=own["target_tip"] == state["target_tip"])
-        return {"claim": own, "peers": peers,
+        return {"claim": own, "peers": peers, "ahead": ahead,
                 "landing_conflict": sum(record["intent"] == "landing" for record in active) > 1}
 
 
@@ -388,6 +427,11 @@ def render(state):
     peers = " peers=" + json.dumps([record["pr"] for record in context.get("peers", [])]) if context.get("peers") else ""
     if context.get("landing_conflict"):
         peers += " landing=conflicting-intents"
+    if context.get("ahead"):
+        peers += " ahead=" + json.dumps([item["pr"] for item in context["ahead"]])
+    queue = state.get("merge_queue") or {}
+    if queue.get("enabled"):
+        peers += f" queue={queue['position'] or '-'}/{queue['length']}" + (":" + queue["state"] if queue["state"] else "")
     return (f"{state['pr']} head={short(state['head'])} base={short(state['recorded_base'])} "
             f"tip={short(state['target_tip'])} target={state['target_branch']} "
             f"branch={state.get('head_branch') or 'unknown'} {state['state']}{flags} ci={state['ci']} "

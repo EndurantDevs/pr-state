@@ -98,6 +98,37 @@ class CoordinationTests(unittest.TestCase):
         self.assertFalse(result["landing_conflict"])
         self.assertEqual(result["claim"]["owner"], "worker-a")
 
+    def test_queue_entries_then_earliest_landing_claim_go_first(self):
+        def ahead(number, position=None, entries=()):
+            state = self.observation(number=number)
+            state["merge_queue"].update(enabled=True, position=position, length=len(entries), entries=[
+                {"pr": pr, "position": place, "state": "QUEUED", "candidate": None} for pr, place in entries])
+            result = module.coordination(state)
+            self.assertEqual(" ahead=" in module.render(dict(state, coordination=result)), bool(result["ahead"]))
+            return [(item["pr"], item["via"]) for item in result["ahead"]]
+
+        self.assertEqual(ahead(123), [])
+        self.claim(self.observation(number=125), owner="worker-c", intent="landing")
+        self.clock.return_value += 10
+        self.claim(self.observation(number=124), owner="worker-b", intent="landing")
+        self.clock.return_value += 10
+        self.claim(self.observation(number=125), owner="worker-c", intent="landing")  # a renewal keeps its place
+        self.assertEqual(ahead(125), [])
+        self.assertEqual(ahead(124), [("example/api#125", "claim")])
+        self.assertEqual(ahead(123), [("example/api#125", "claim"), ("example/api#124", "claim")])
+
+        entries = ((126, 1), (125, 2))
+        self.assertEqual(ahead(124, entries=entries), [("example/api#126", "queue"), ("example/api#125", "queue")])
+        self.assertEqual(ahead(125, 2, entries), [("example/api#126", "queue")])
+        self.assertEqual(ahead(126, 1, entries), [])
+
+        self.clock.return_value += 280
+        self.claim(self.observation(number=124), owner="worker-b", intent="landing")
+        self.clock.return_value += 30  # the first claim lapsed, so its owner rejoins behind
+        self.claim(self.observation(number=125), owner="worker-c", intent="landing")
+        self.assertEqual(ahead(124), [])
+        self.assertEqual(ahead(125), [("example/api#124", "claim")])
+
     def test_claim_requires_contact_and_bounded_lease(self):
         with self.assertRaises(module.StateError): module.coordination(self.state, claim="worker-a")
         for lease in (29, 3601):
